@@ -19,6 +19,7 @@
     --accent: #68aecd; --accent-soft: #1f3542; --accent-fg: #0d1317; --bad: #e98a73; color-scheme: dark; }
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--font-ui); }
 .app { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px; padding: 14px; }
@@ -26,7 +27,7 @@ body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--
 .stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
 .video { position: relative; width: 100%; aspect-ratio: 16/9; max-height: calc(100vh - 150px); background: #000; border-radius: 6px; overflow: hidden; }
 .video > div, .video iframe { position: absolute; inset: 0; width: 100%; height: 100%; }
-.empty { position: absolute; inset: 0; display: grid; place-items: center; color: #aab4bd; text-align: center; padding: 20px; }
+.empty { position: absolute; inset: 0; pointer-events: none; display: grid; place-items: center; color: #aab4bd; text-align: center; padding: 20px; }
 .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .now { flex: 1 1 260px; min-width: 0; }
 .now b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -336,6 +337,7 @@ function onErr() {
 }
 window.onYouTubeIframeAPIReady = function () {
   player = new YT.Player('player', {
+    host: 'https://www.youtube-nocookie.com',
     playerVars: { playsinline: 1, rel: 0, cc_load_policy: settings.cc ? 1 : 0, origin: location.origin },
     events: {
       onReady: () => {
