@@ -193,6 +193,7 @@ let titles = LS.get('titles', {});
 let settings = Object.assign({ loop: 'off', shuffle: false, rate: 1, cc: false }, LS.get('settings', {}));
 let player = null, ready = false, loadToken = 0, endedToken = -1, loadedAt = 0;
 const bad = new Set();
+let errRun = 0;
 
 function saveList() { LS.set('list:' + name, toText(items)); }
 function savePos() { if (cur >= 0) LS.set('pos:' + name, order[cur]); }
@@ -270,8 +271,9 @@ function updateButtons() {
 }
 
 /* ---------- playback ---------- */
-function play(pos) {
+function play(pos, auto) {
   if (!ready || !items.length) return;
+  if (!auto) errRun = 0;
   if (pos < 0 || pos >= order.length) return;
   cur = pos;
   const it = items[order[cur]];
@@ -283,11 +285,11 @@ function play(pos) {
 }
 function advance() {
   if (!items.length) return;
-  if (settings.loop === 'one') return play(cur);
-  if (cur + 1 < order.length) return play(cur + 1);
+  if (settings.loop === 'one') return play(cur, true);
+  if (cur + 1 < order.length) return play(cur + 1, true);
   if (settings.loop === 'all') {
     if (settings.shuffle) { shuffleOrder(); renderList(); }
-    return play(0);
+    return play(0, true);
   }
 }
 function onState(e) {
@@ -297,6 +299,7 @@ function onState(e) {
     endedToken = loadToken;
     advance();
   } else if (e.data === S.PLAYING) {
+    errRun = 0;
     if (player.getPlaybackRate() !== settings.rate) player.setPlaybackRate(settings.rate);
     const it = items[order[cur]];
     const d = player.getVideoData ? player.getVideoData() : null;
@@ -323,6 +326,11 @@ function onErr() {
   bad.add(order[cur]);
   const li = document.querySelector(`#list li[data-pos="${cur}"]`);
   if (li) li.classList.add('bad');
+  errRun++;
+  if (errRun >= 2) {
+    $('nowInfo').textContent = '再生できない動画が続いたため停止しました（YouTubeのログイン確認などが原因の可能性があります）';
+    return;
+  }
   const token = loadToken;
   setTimeout(() => { if (token === loadToken) advance(); }, 1200);
 }
@@ -385,7 +393,7 @@ $('list').addEventListener('click', e => {
   if (li) play(Number(li.dataset.pos));
 });
 $('prev').onclick = () => play(Math.max(0, cur - 1));
-$('next').onclick = () => advance();
+$('next').onclick = () => { errRun = 0; advance(); };
 $('replay').onclick = () => play(cur >= 0 ? cur : 0);
 $('shuffle').onclick = () => {
   settings.shuffle = !settings.shuffle; saveSettings();
