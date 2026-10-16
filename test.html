@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Embed Test</title>
+<style>
+:root { --bg: #eef1f3; --panel: #fff; --fg: #1b232b; --muted: #61707d; --line: #d3dae0; color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root { --bg: #12171c; --panel: #1a2128; --fg: #e1e7ec; --muted: #93a0ac; --line: #2f3a44; color-scheme: dark; } }
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 "Hiragino Sans", "Yu Gothic UI", Meiryo, sans-serif; }
+main { max-width: 1100px; margin: 0 auto; padding: 16px; display: grid; gap: 14px; }
+.grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 14px; }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; display: grid; gap: 8px; min-width: 0; }
+.card h2 { margin: 0; font-size: 1rem; }
+.card p { margin: 0; color: var(--muted); font-size: .82rem; }
+.box { position: relative; aspect-ratio: 16/9; background: #000; border-radius: 4px; overflow: hidden; }
+.box > * { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+input, button { font: inherit; padding: 6px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--fg); }
+.log { font: 12px/1.4 Consolas, monospace; color: var(--muted); min-height: 1.4em; }
+</style>
+</head>
+<body>
+<main>
+  <h1 style="margin:0;font-size:1.3rem">埋め込み方式の比較テスト</h1>
+  <div class="row">
+    <label for="vid">動画ID</label>
+    <input id="vid" value="8v8eDMh1o3g">
+    <button id="go">この動画で読み込み直す</button>
+  </div>
+  <p style="margin:0;color:var(--muted)">A〜Dの再生ボタンを1つずつ押して、どれでログイン確認が出るかを見てください。</p>
+  <div class="grid">
+    <section class="card">
+      <h2>A. 通常の埋め込み（youtube.com）</h2>
+      <p>YouTubeの「共有→埋め込む」で出るコードと同じ方式</p>
+      <div class="box" id="boxA"></div>
+    </section>
+    <section class="card">
+      <h2>B. プライバシー強化モード（youtube-nocookie.com）</h2>
+      <p>Aと同じ方式で、アカウントと結び付かない版</p>
+      <div class="box" id="boxB"></div>
+    </section>
+    <section class="card">
+      <h2>C. IFrame API・設定なし（youtube.com）</h2>
+      <p>プログラムで操作する方式。Clip-Chainはおそらくこれ</p>
+      <div class="box"><div id="pC"></div></div>
+      <div class="log" id="logC"></div>
+    </section>
+    <section class="card">
+      <h2>D. IFrame API・再生ページと同じ設定</h2>
+      <p>今の再生ページの方式（nocookie＋origin指定）</p>
+      <div class="box"><div id="pD"></div></div>
+      <div class="log" id="logD"></div>
+    </section>
+  </div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+let id = $('vid').value.trim();
+let pC = null, pD = null;
+
+function plain() {
+  $('boxA').innerHTML = `<iframe src="https://www.youtube.com/embed/${id}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+  $('boxB').innerHTML = `<iframe src="https://www.youtube-nocookie.com/embed/${id}" allow="autoplay; encrypted-media; picture-in-picture" allowfullscreen referrerpolicy="strict-origin-when-cross-origin"></iframe>`;
+}
+function logState(el, name) {
+  return {
+    onStateChange: e => { $(el).textContent = `${name}: state ${e.data}`; },
+    onError: e => { $(el).textContent = `${name}: エラー ${e.data}`; }
+  };
+}
+window.onYouTubeIframeAPIReady = () => {
+  pC = new YT.Player('pC', { videoId: id, events: logState('logC', 'C') });
+  pD = new YT.Player('pD', {
+    videoId: id,
+    host: 'https://www.youtube-nocookie.com',
+    playerVars: { playsinline: 1, rel: 0, origin: location.origin },
+    events: logState('logD', 'D')
+  });
+};
+$('go').onclick = () => {
+  id = $('vid').value.trim();
+  plain();
+  if (pC) pC.cueVideoById(id);
+  if (pD) pD.cueVideoById(id);
+};
+plain();
+const s = document.createElement('script');
+s.src = 'https://www.youtube.com/iframe_api';
+document.head.appendChild(s);
+</script>
+</body>
+</html>
