@@ -1,0 +1,492 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<title>Clip Player</title>
+<style>
+/* Layout: player + transport on the left, clip list on the right; stacks on narrow screens */
+:root {
+  --bg: #eef1f3; --panel: #ffffff; --fg: #1b232b; --muted: #61707d; --line: #d3dae0;
+  --accent: #2b6c88; --accent-soft: #dcebf2; --accent-fg: #ffffff; --bad: #b4462f;
+  --font-ui: "Hiragino Sans", "Yu Gothic UI", "Meiryo", system-ui, sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "BIZ UDGothic", monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #12171c; --panel: #1a2128; --fg: #e1e7ec; --muted: #93a0ac; --line: #2f3a44;
+    --accent: #68aecd; --accent-soft: #1f3542; --accent-fg: #0d1317; --bad: #e98a73; color-scheme: dark; }
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.5 var(--font-ui); }
+.app { height: 100%; display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 14px; padding: 14px; }
+@media (max-width: 900px) { .app { grid-template-columns: 1fr; height: auto; } }
+.stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.video { position: relative; width: 100%; aspect-ratio: 16/9; max-height: calc(100vh - 150px); background: #000; border-radius: 6px; overflow: hidden; }
+.video > div, .video iframe { position: absolute; inset: 0; width: 100%; height: 100%; }
+.empty { position: absolute; inset: 0; display: grid; place-items: center; color: #aab4bd; text-align: center; padding: 20px; }
+.bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.now { flex: 1 1 260px; min-width: 0; }
+.now b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.now span { color: var(--muted); font-size: .85rem; font-variant-numeric: tabular-nums; }
+button, select, .filebtn { font: inherit; font-size: .88rem; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--panel); color: var(--fg); }
+button.on { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button:focus-visible, select:focus-visible, .filebtn:focus-within, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.side { display: flex; flex-direction: column; gap: 10px; min-height: 0; min-width: 0; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; }
+.head { padding: 10px 12px; display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--line); }
+.head input { flex: 1; min-width: 0; font: inherit; font-weight: 600; border: 1px solid transparent; background: transparent; color: var(--fg); padding: 4px 6px; border-radius: 4px; }
+.head input:hover { border-color: var(--line); }
+.count { color: var(--muted); font-size: .82rem; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.list { flex: 1; min-height: 240px; overflow-y: auto; }
+.listwrap { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+ol { list-style: none; margin: 0; padding: 4px 0; }
+li { display: grid; grid-template-columns: 2.4em 64px minmax(0,1fr); gap: 8px; align-items: center; padding: 5px 10px; cursor: pointer; }
+li:hover { background: var(--accent-soft); }
+li.cur { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--accent); }
+li.bad { opacity: .55; }
+li .n { color: var(--muted); font-size: .8rem; text-align: right; font-variant-numeric: tabular-nums; }
+li img { width: 64px; height: 36px; object-fit: cover; border-radius: 3px; background: var(--line); }
+li .t { min-width: 0; }
+li .t b { display: block; font-weight: 500; font-size: .86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+li .t span { color: var(--muted); font-size: .78rem; font-variant-numeric: tabular-nums; }
+li.bad .t span::after { content: " 再生不可"; color: var(--bad); }
+details { padding: 10px 12px; }
+summary { cursor: pointer; font-weight: 600; font-size: .9rem; }
+.edit { display: grid; gap: 8px; margin-top: 10px; }
+.add { display: grid; grid-template-columns: minmax(0,1fr) 5.5em 5.5em auto; gap: 6px; }
+.add input, textarea { font: 13px/1.5 var(--font-mono); padding: 6px 8px; border: 1px solid var(--line); border-radius: 5px; background: var(--bg); color: var(--fg); min-width: 0; }
+textarea { width: 100%; min-height: 160px; resize: vertical; white-space: pre; overflow-x: auto; }
+input[type=file] { position: absolute; opacity: 0; width: 1px; height: 1px; }
+.row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.hint { color: var(--muted); font-size: .8rem; }
+.msg { color: var(--bad); font-size: .8rem; white-space: pre-wrap; }
+body.drag::after { content: "TXTをドロップして読み込み"; position: fixed; inset: 0; display: grid; place-items: center;
+  background: color-mix(in srgb, var(--accent) 25%, transparent); color: var(--fg); font-size: 1.4rem; font-weight: 600; pointer-events: none; }
+kbd { font: .75rem var(--font-mono); border: 1px solid var(--line); border-radius: 3px; padding: 0 4px; }
+</style>
+</head>
+<body>
+<div class="app">
+  <section class="stage">
+    <div class="video">
+      <div id="player"></div>
+      <div class="empty" id="empty">TXTファイルをこの画面にドラッグ＆ドロップするか、<br>右の「編集」から動画を追加してください。</div>
+    </div>
+    <div class="bar">
+      <div class="now"><b id="nowTitle">—</b><span id="nowInfo"></span></div>
+      <button id="prev" title="前へ (P)">◀◀</button>
+      <button id="replay" title="この区間を最初から (R)">↺ 区間</button>
+      <button id="next" title="次へ (N)">▶▶</button>
+      <button id="shuffle" title="シャッフル (S)">シャッフル</button>
+      <button id="loop" title="ループ (L)">ループ: なし</button>
+      <select id="rate" title="再生速度">
+        <option value="0.5">0.5×</option><option value="0.75">0.75×</option><option value="0.9">0.9×</option>
+        <option value="1" selected>1×</option><option value="1.1">1.1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option>
+      </select>
+    </div>
+    <div class="hint"><kbd>Space</kbd> 再生/停止　<kbd>←</kbd><kbd>→</kbd> 5秒戻る/進む　<kbd>R</kbd> 区間を最初から　<kbd>N</kbd><kbd>P</kbd> 次/前　<kbd>S</kbd> シャッフル　<kbd>L</kbd> ループ</div>
+  </section>
+
+  <aside class="side">
+    <div class="panel listwrap">
+      <div class="head">
+        <input id="name" title="プレイリスト名（URLの # 以降になります）" spellcheck="false">
+        <span class="count" id="count"></span>
+      </div>
+      <div class="list"><ol id="list"></ol></div>
+    </div>
+    <div class="panel">
+      <details id="editBox">
+        <summary>編集・読み込み</summary>
+        <div class="edit">
+          <div class="add">
+            <input id="addUrl" placeholder="YouTubeのURL">
+            <input id="addSt" placeholder="開始 1:20">
+            <input id="addEn" placeholder="終了 2:05">
+            <button id="addBtn">追加</button>
+          </div>
+          <textarea id="text" spellcheck="false" placeholder="https://www.youtube.com/watch?v=xxxxxxxxxxx, 00:01:20, 00:01:35"></textarea>
+          <div class="row">
+            <button id="apply">一覧に反映</button>
+            <label class="filebtn">TXTを開く<input type="file" id="file" accept=".txt,.m3u,.m3u8,text/plain"></label>
+            <button id="save">TXTで保存</button>
+          </div>
+          <label class="hint"><input type="checkbox" id="cc"> 字幕を最初から表示（次の動画から反映）</label>
+          <div class="msg" id="msg"></div>
+        </div>
+      </details>
+    </div>
+  </aside>
+</div>
+
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const LS = {
+  get(k, d) { try { const v = localStorage.getItem('cp:' + k); return v === null ? d : JSON.parse(v); } catch (e) { return d; } },
+  set(k, v) { try { localStorage.setItem('cp:' + k, JSON.stringify(v)); } catch (e) {} }
+};
+
+/* ---------- parsing ---------- */
+const idRe = /(?:youtube\.com\/(?:watch\?(?:[^#]*&)?v=|shorts\/|live\/|embed\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/;
+function toSec(t) {
+  t = (t || '').trim();
+  if (!t) return null;
+  let v = 0;
+  for (const x of t.split(':')) {
+    const s = x.trim(), n = Number(s);
+    if (!s || !isFinite(n)) throw new Error('time');
+    v = v * 60 + n;
+  }
+  return v;
+}
+function qsNum(url, key) {
+  const m = url.match(new RegExp('[?&]' + key + '=([0-9.]+)'));
+  return m ? Number(m[1]) : null;
+}
+function parse(text) {
+  const items = [], warns = [];
+  text.split(/\r?\n/).forEach((raw, i) => {
+    const line = raw.replace(/^﻿/, '').trim();
+    if (!line || line.startsWith('#')) return;
+    const p = line.split(',');
+    const url = p[0].trim();
+    const m = url.match(idRe);
+    if (!m) { warns.push(`${i + 1}行目: YouTubeのURLではないため飛ばしました`); return; }
+    let st = null, en = null;
+    try {
+      if (p.length >= 2) st = toSec(p[1]);
+      if (p.length >= 3) en = toSec(p[2]);
+    } catch (e) { warns.push(`${i + 1}行目: 時刻を読めないため飛ばしました`); return; }
+    if (st === null) st = qsNum(url, 't') ?? qsNum(url, 'start');
+    if (en === null) en = qsNum(url, 'end');
+    items.push({ id: m[1], st: st && st > 0 ? st : 0, en: en && en > 0 ? en : null });
+  });
+  return { items, warns };
+}
+function fmt(s) {
+  s = Math.round(s);
+  const h = Math.floor(s / 3600), m = Math.floor(s % 3600 / 60), x = s % 60;
+  const mm = String(m).padStart(h ? 2 : 1, '0'), xx = String(x).padStart(2, '0');
+  return h ? `${h}:${mm}:${xx}` : `${mm}:${xx}`;
+}
+function hms(s) {
+  s = Math.round(s);
+  return [Math.floor(s / 3600), Math.floor(s % 3600 / 60), s % 60].map(n => String(n).padStart(2, '0')).join(':');
+}
+function toText(items) {
+  return items.map(it => {
+    const url = 'https://www.youtube.com/watch?v=' + it.id;
+    if (!it.st && !it.en) return url;
+    return `${url}, ${hms(it.st || 0)}` + (it.en ? `, ${hms(it.en)}` : '');
+  }).join('\n') + (items.length ? '\n' : '');
+}
+
+/* ---------- state ---------- */
+let name = decodeURIComponent(location.hash.slice(1)) || 'playlist';
+let items = [], order = [], cur = -1;
+let titles = LS.get('titles', {});
+let settings = Object.assign({ loop: 'off', shuffle: false, rate: 1, cc: false }, LS.get('settings', {}));
+let player = null, ready = false, loadToken = 0, endedToken = -1, loadedAt = 0;
+const bad = new Set();
+
+function saveList() { LS.set('list:' + name, toText(items)); }
+function savePos() { if (cur >= 0) LS.set('pos:' + name, order[cur]); }
+function saveSettings() { LS.set('settings', settings); }
+
+function setItems(newItems, keepIndex) {
+  items = newItems;
+  bad.clear();
+  order = items.map((_, i) => i);
+  if (settings.shuffle) shuffleOrder(keepIndex);
+  cur = keepIndex != null && keepIndex < items.length ? order.indexOf(keepIndex) : -1;
+  renderList();
+  updateNow();
+}
+function shuffleOrder(firstIdx) {
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  if (firstIdx != null) {
+    const k = order.indexOf(firstIdx);
+    if (k > 0) { order.splice(k, 1); order.unshift(firstIdx); }
+  }
+}
+
+/* ---------- rendering ---------- */
+function rowLabel(it) {
+  const range = it.en ? `${fmt(it.st)} – ${fmt(it.en)}` : (it.st ? `${fmt(it.st)} –` : '全体');
+  return range;
+}
+function renderList() {
+  const ol = $('list');
+  const frag = document.createDocumentFragment();
+  order.forEach((idx, pos) => {
+    const it = items[idx];
+    const li = document.createElement('li');
+    li.dataset.pos = pos;
+    if (pos === cur) li.className = 'cur';
+    if (bad.has(idx)) li.classList.add('bad');
+    li.innerHTML = `<span class="n">${pos + 1}</span><img loading="lazy" alt="" src="https://i.ytimg.com/vi/${it.id}/mqdefault.jpg"><span class="t"><b></b><span></span></span>`;
+    li.querySelector('b').textContent = titles[it.id] || it.id;
+    li.querySelector('.t span').textContent = rowLabel(it);
+    frag.appendChild(li);
+  });
+  ol.replaceChildren(frag);
+  $('count').textContent = items.length + '件';
+  $('empty').hidden = items.length > 0;
+}
+function markCurrent() {
+  document.querySelectorAll('#list li.cur').forEach(li => li.classList.remove('cur'));
+  const li = document.querySelector(`#list li[data-pos="${cur}"]`);
+  if (li) { li.classList.add('cur'); li.scrollIntoView({ block: 'nearest' }); }
+}
+function updateTitleRow(id) {
+  order.forEach((idx, pos) => {
+    if (items[idx].id === id) {
+      const b = document.querySelector(`#list li[data-pos="${pos}"] b`);
+      if (b) b.textContent = titles[id];
+    }
+  });
+}
+function updateNow() {
+  if (cur < 0 || !items.length) { $('nowTitle').textContent = '—'; $('nowInfo').textContent = items.length ? `${items.length}件` : ''; return; }
+  const it = items[order[cur]];
+  $('nowTitle').textContent = titles[it.id] || it.id;
+  $('nowInfo').textContent = `${cur + 1} / ${order.length}　${rowLabel(it)}`;
+}
+function updateButtons() {
+  $('shuffle').classList.toggle('on', settings.shuffle);
+  const L = { off: 'なし', all: '全体', one: '1曲' };
+  $('loop').textContent = 'ループ: ' + L[settings.loop];
+  $('loop').classList.toggle('on', settings.loop !== 'off');
+  $('rate').value = String(settings.rate);
+  $('cc').checked = settings.cc;
+}
+
+/* ---------- playback ---------- */
+function play(pos) {
+  if (!ready || !items.length) return;
+  if (pos < 0 || pos >= order.length) return;
+  cur = pos;
+  const it = items[order[cur]];
+  const opts = { videoId: it.id, startSeconds: it.st || 0 };
+  if (it.en) opts.endSeconds = it.en;
+  loadToken++; loadedAt = Date.now();
+  player.loadVideoById(opts);
+  markCurrent(); updateNow(); savePos();
+}
+function advance() {
+  if (!items.length) return;
+  if (settings.loop === 'one') return play(cur);
+  if (cur + 1 < order.length) return play(cur + 1);
+  if (settings.loop === 'all') {
+    if (settings.shuffle) { shuffleOrder(); renderList(); }
+    return play(0);
+  }
+}
+function onState(e) {
+  const S = YT.PlayerState;
+  if (e.data === S.ENDED) {
+    if (endedToken === loadToken) return;
+    endedToken = loadToken;
+    advance();
+  } else if (e.data === S.PLAYING) {
+    if (player.getPlaybackRate() !== settings.rate) player.setPlaybackRate(settings.rate);
+    const it = items[order[cur]];
+    const d = player.getVideoData ? player.getVideoData() : null;
+    if (it && d && d.title && titles[it.id] !== d.title) {
+      titles[it.id] = d.title; LS.set('titles', titles);
+      updateTitleRow(it.id); updateNow();
+    }
+  }
+}
+/* Safety net: some videos pause instead of firing ENDED at endSeconds */
+setInterval(() => {
+  if (!ready || cur < 0 || endedToken === loadToken || Date.now() - loadedAt < 1500) return;
+  const it = items[order[cur]];
+  if (!it || !it.en) return;
+  const st = player.getPlayerState();
+  if (st !== YT.PlayerState.PLAYING && st !== YT.PlayerState.PAUSED) return;
+  if (player.getCurrentTime() >= it.en - 0.15) {
+    endedToken = loadToken;
+    advance();
+  }
+}, 250);
+function onErr() {
+  if (cur < 0) return;
+  bad.add(order[cur]);
+  const li = document.querySelector(`#list li[data-pos="${cur}"]`);
+  if (li) li.classList.add('bad');
+  const token = loadToken;
+  setTimeout(() => { if (token === loadToken) advance(); }, 1200);
+}
+window.onYouTubeIframeAPIReady = function () {
+  player = new YT.Player('player', {
+    playerVars: { playsinline: 1, rel: 0, cc_load_policy: settings.cc ? 1 : 0, origin: location.origin },
+    events: {
+      onReady: () => {
+        ready = true;
+        if (items.length) {
+          const p = cur >= 0 ? cur : 0;
+          const it = items[order[p]];
+          cur = p;
+          const opts = { videoId: it.id, startSeconds: it.st || 0 };
+          if (it.en) opts.endSeconds = it.en;
+          loadToken++;
+          player.cueVideoById(opts);
+          markCurrent(); updateNow();
+        }
+      },
+      onStateChange: onState,
+      onError: onErr
+    }
+  });
+};
+
+/* ---------- loading ---------- */
+function showWarns(w) { $('msg').textContent = w.length ? w.slice(0, 20).join('\n') + (w.length > 20 ? `\n…ほか${w.length - 20}件` : '') : ''; }
+function loadText(text, playFirst) {
+  const r = parse(text);
+  setItems(r.items, null);
+  showWarns(r.warns);
+  saveList();
+  $('text').value = toText(items);
+  if (playFirst && ready && items.length) play(0);
+}
+function readFile(f) {
+  if (!f) return;
+  const rd = new FileReader();
+  rd.onload = () => {
+    if (!location.hash || name === 'playlist') {
+      const base = f.name.replace(/\.[^.]*$/, '');
+      setName(base);
+    }
+    loadText(rd.result, true);
+  };
+  rd.readAsText(f, 'utf-8');
+}
+function setName(n) {
+  n = n.trim() || 'playlist';
+  name = n;
+  $('name').value = n;
+  history.replaceState(null, '', '#' + encodeURIComponent(n));
+  document.title = n + ' – Clip Player';
+}
+
+/* ---------- events ---------- */
+$('list').addEventListener('click', e => {
+  const li = e.target.closest('li');
+  if (li) play(Number(li.dataset.pos));
+});
+$('prev').onclick = () => play(Math.max(0, cur - 1));
+$('next').onclick = () => advance();
+$('replay').onclick = () => play(cur >= 0 ? cur : 0);
+$('shuffle').onclick = () => {
+  settings.shuffle = !settings.shuffle; saveSettings();
+  const curIdx = cur >= 0 ? order[cur] : null;
+  order = items.map((_, i) => i);
+  if (settings.shuffle) shuffleOrder(curIdx ?? undefined);
+  cur = curIdx != null ? order.indexOf(curIdx) : -1;
+  renderList(); updateNow(); updateButtons();
+};
+$('loop').onclick = () => {
+  settings.loop = { off: 'all', all: 'one', one: 'off' }[settings.loop];
+  saveSettings(); updateButtons();
+};
+$('rate').onchange = e => {
+  settings.rate = Number(e.target.value); saveSettings();
+  if (ready) player.setPlaybackRate(settings.rate);
+};
+$('cc').onchange = e => { settings.cc = e.target.checked; saveSettings(); };
+$('apply').onclick = () => {
+  const curIdx = cur >= 0 ? order[cur] : null;
+  const r = parse($('text').value);
+  setItems(r.items, curIdx);
+  showWarns(r.warns);
+  saveList();
+};
+$('addBtn').onclick = () => {
+  const url = $('addUrl').value.trim();
+  if (!url) return;
+  const line = [url, $('addSt').value.trim(), $('addEn').value.trim()].filter((v, i) => i === 0 || v).join(', ');
+  const r = parse(line);
+  if (!r.items.length) { showWarns(['追加できませんでした: ' + (r.warns[0] || 'URLを確認してください').replace(/^1行目: /, '')]); return; }
+  items.push(r.items[0]);
+  order.push(items.length - 1);
+  saveList(); renderList(); updateNow();
+  $('text').value = toText(items);
+  $('addUrl').value = $('addSt').value = $('addEn').value = '';
+  showWarns([]);
+  $('addUrl').focus();
+};
+['addUrl', 'addSt', 'addEn'].forEach(id => $(id).addEventListener('keydown', e => { if (e.key === 'Enter') $('addBtn').click(); }));
+$('file').onchange = e => readFile(e.target.files[0]);
+$('save').onclick = () => {
+  const blob = new Blob([toText(items).replace(/\n/g, '\r\n')], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = name + '.txt';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+};
+$('name').addEventListener('change', e => {
+  setName(e.target.value);
+  saveList(); savePos();
+});
+$('name').addEventListener('keydown', e => { if (e.key === 'Enter') e.target.blur(); });
+
+let dragDepth = 0;
+document.addEventListener('dragenter', e => { if (e.dataTransfer.types.includes('Files')) { dragDepth++; document.body.classList.add('drag'); } });
+document.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('drag'); } });
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => {
+  e.preventDefault(); dragDepth = 0; document.body.classList.remove('drag');
+  if (e.dataTransfer.files[0]) readFile(e.dataTransfer.files[0]);
+});
+
+document.addEventListener('keydown', e => {
+  if (e.target.closest('input, textarea, select') || e.ctrlKey || e.metaKey || e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === ' ') {
+    if (!ready) return;
+    e.preventDefault();
+    if (player.getPlayerState() === YT.PlayerState.PLAYING) player.pauseVideo();
+    else if (cur < 0) play(0); else player.playVideo();
+  } else if (k === 'arrowleft' || k === 'arrowright') {
+    if (!ready || cur < 0) return;
+    e.preventDefault();
+    const it = items[order[cur]];
+    let t = player.getCurrentTime() + (k === 'arrowleft' ? -5 : 5);
+    t = Math.max(it.st || 0, it.en ? Math.min(t, it.en - 0.5) : t);
+    player.seekTo(t, true);
+  } else if (k === 'n') $('next').click();
+  else if (k === 'p') $('prev').click();
+  else if (k === 'r') $('replay').click();
+  else if (k === 's') $('shuffle').click();
+  else if (k === 'l') $('loop').click();
+});
+
+window.addEventListener('hashchange', () => location.reload());
+
+/* ---------- boot ---------- */
+setName(name);
+updateButtons();
+const stored = LS.get('list:' + name, '');
+if (stored) {
+  const r = parse(stored);
+  const pos = LS.get('pos:' + name, null);
+  setItems(r.items, pos);
+  $('text').value = toText(items);
+}
+const s = document.createElement('script');
+s.src = 'https://www.youtube.com/iframe_api';
+document.head.appendChild(s);
+</script>
+</body>
+</html>
