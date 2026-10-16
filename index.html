@@ -193,7 +193,7 @@ let name = decodeURIComponent(location.hash.slice(1)) || 'playlist';
 let items = [], order = [], cur = -1;
 let titles = LS.get('titles', {});
 let settings = Object.assign({ loop: 'off', shuffle: false, rate: 1, cc: false }, LS.get('settings', {}));
-let player = null, ready = false, loadToken = 0, endedToken = -1, loadedAt = 0;
+let apiReady = false, player = null, ready = false, loadToken = 0, endedToken = -1, loadedAt = 0;
 const bad = new Set();
 let errRun = 0;
 
@@ -273,8 +273,21 @@ function updateButtons() {
 }
 
 /* ---------- playback ---------- */
+function cue(pos) {
+  if (!items.length || pos < 0 || pos >= order.length) return;
+  cur = pos;
+  const it = items[order[cur]];
+  if (!player) { if (apiReady) createPlayer(pos); markCurrent(); updateNow(); savePos(); return; }
+  if (!ready) return;
+  const opts = { videoId: it.id, startSeconds: it.st || 0 };
+  if (it.en) opts.endSeconds = it.en;
+  loadToken++; loadedAt = Date.now();
+  player.cueVideoById(opts);
+  markCurrent(); updateNow(); savePos();
+}
 function play(pos, auto) {
-  if (!ready || !items.length) return;
+  if (!items.length) return;
+  if (!ready) return cue(pos);
   if (!auto) errRun = 0;
   if (pos < 0 || pos >= order.length) return;
   cur = pos;
@@ -336,28 +349,26 @@ function onErr() {
   const token = loadToken;
   setTimeout(() => { if (token === loadToken) advance(); }, 1200);
 }
-window.onYouTubeIframeAPIReady = function () {
+function createPlayer(pos) {
+  const it = items[order[pos]];
+  const vars = { playsinline: 1, rel: 0, cc_load_policy: settings.cc ? 1 : 0, origin: location.origin };
+  if (it.st) vars.start = Math.floor(it.st);
+  if (it.en) vars.end = Math.ceil(it.en);
+  loadToken++; loadedAt = Date.now();
   player = new YT.Player('player', {
     host: 'https://www.youtube-nocookie.com',
-    playerVars: { playsinline: 1, rel: 0, cc_load_policy: settings.cc ? 1 : 0, origin: location.origin },
+    videoId: it.id,
+    playerVars: vars,
     events: {
-      onReady: () => {
-        ready = true;
-        if (items.length) {
-          const p = cur >= 0 ? cur : 0;
-          const it = items[order[p]];
-          cur = p;
-          const opts = { videoId: it.id, startSeconds: it.st || 0 };
-          if (it.en) opts.endSeconds = it.en;
-          loadToken++;
-          player.cueVideoById(opts);
-          markCurrent(); updateNow();
-        }
-      },
+      onReady: () => { ready = true; markCurrent(); updateNow(); },
       onStateChange: onState,
       onError: onErr
     }
   });
+}
+window.onYouTubeIframeAPIReady = function () {
+  apiReady = true;
+  if (items.length) { cur = cur >= 0 ? cur : 0; createPlayer(cur); markCurrent(); updateNow(); }
 };
 
 /* ---------- loading ---------- */
@@ -368,7 +379,7 @@ function loadText(text, playFirst) {
   showWarns(r.warns);
   saveList();
   $('text').value = toText(items);
-  if (playFirst && ready && items.length) play(0);
+  if (playFirst && items.length) cue(0);
 }
 function readFile(f) {
   if (!f) return;
